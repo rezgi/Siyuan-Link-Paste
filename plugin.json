@@ -1,0 +1,13 @@
+{
+  "name": "siyuan-link-paste",
+  "author": "Amin",
+  "url": "https://github.com/rezgi/Siyuan-Link-Paste",
+  "version": "0.1.3",
+  "minAppVersion": "3.8.11",
+  "backends": ["windows", "linux", "darwin"],
+  "frontends": ["desktop", "desktop-window", "browser-desktop"],
+  "displayName": { "default": "Link Paste" },
+  "description": { "default": "Paste a URL as a titled link or an expandable preview card" },
+  "readme": { "default": "README.md" },
+  "keywords": ["link", "paste", "title", "card"]
+}
