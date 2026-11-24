@@ -13,7 +13,7 @@ esbuild.buildSync({
   target: 'chrome120',
   minify: false,
 });
-for (const file of ['plugin.json', 'README.md', 'LICENSE', 'NOTICE.md']) {
+for (const file of ['index.css', 'icon.png', 'preview.jpg', 'plugin.json', 'README.md', 'CHANGELOG.md', 'LICENSE', 'NOTICE.md']) {
   fs.copyFileSync(path.join(root, file), path.join(root, 'dist', file));
 }
 fs.cpSync(path.join(root, 'i18n'), path.join(root, 'dist/i18n'), { recursive: true });

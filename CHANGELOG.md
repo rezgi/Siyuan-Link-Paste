@@ -1,15 +1,18 @@
 # Changelog
 
-## 0.1.3
+## 0.1.6 — 2026-11-24
 
-Initial public release, following local testing and acceptance.
+- Native cards with editable title links that support SiYuan’s usual link panel.
+- Choose native cards or HTML blocks for new pastes; convert existing HTML cards from the block menu.
+- Switch between compact and expanded native cards with the ⤢ button or block menu.
+- Optionally save thumbnails to SiYuan assets, off by default. Choose an assets subfolder; the default is `assets/_link_thumbs`. Failed saves keep the online image.
+- Fix native image hover controls spilling over card thumbnails.
+- Add the transparent plugin icon and marketplace preview.
+- Shorten the README to usage, useful options and dated changes.
 
-- Configurable titled-link and preview-card paste commands.
-- Immediate URL loading placeholders that update without moving the caret.
-- Compact and expanded preview cards with descriptions, images and favicons.
-- Desktop fetching with a kernel proxy fallback and a shared timeout.
-- Preserve custom labels, and replace selected bare URLs with their page titles.
-- Keep multiline metadata inside one native HTML block.
-- Normalize paragraph/list boundary selections and prefer the live caret.
+## 0.1.3 — 2026-11-23
 
-Local regression coverage: 30 passing tests with SiYuan's Lute engine available.
+- First public release: configurable titled-link and preview-card paste commands.
+- Immediate loading placeholders, adjustable timeout, compact or expanded cards.
+- Preserve custom link labels; handle paragraph/list selections correctly.
+- Fix multiline card descriptions spilling outside their HTML block.

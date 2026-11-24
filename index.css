@@ -1,0 +1,34 @@
+.protyle-wysiwyg [data-type="NodeSuperBlock"][custom-link-paste="card"] {
+  position: relative; display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(80px, 25%);
+  gap: 6px 16px; padding: 14px 42px 14px 16px !important; margin: 8px 0;
+  border: 1px solid var(--b3-border-color); border-radius: 8px; box-sizing: border-box;
+}
+.protyle-wysiwyg [custom-link-paste="card"] > [custom-link-paste-role] { min-width: 0; margin: 0 !important; padding: 0 !important; }
+.protyle-wysiwyg [custom-link-paste="card"] > [custom-link-paste-role="title"] { grid-column: 1; grid-row: 1; font-size: 15px; font-weight: 600; }
+.protyle-wysiwyg [custom-link-paste="card"] > [custom-link-paste-role="description"] { grid-column: 1; grid-row: 2; font-size: 13px; color: var(--b3-theme-on-surface); }
+.protyle-wysiwyg [custom-link-paste="card"] > [custom-link-paste-role="description"] > [contenteditable] { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.protyle-wysiwyg [custom-link-paste="card"] > [custom-link-paste-role="description"] > [contenteditable]:focus { display: block; overflow: visible; }
+.protyle-wysiwyg [custom-link-paste="card"] > [custom-link-paste-role="image"] { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+.protyle-wysiwyg [custom-link-paste="card"] > [custom-link-paste-role="image"] .img { display: inline-block; width: 100% !important; max-width: 100% !important; position: relative; overflow: hidden; border-radius: 5px; vertical-align: middle; }
+.protyle-wysiwyg [custom-link-paste="card"] > [custom-link-paste-role="image"] .protyle-image-container { width: 100% !important; max-width: 100% !important; height: auto !important; }
+.protyle-wysiwyg [custom-link-paste="card"] > [custom-link-paste-role="image"] img { display: block; width: 100%; height: auto !important; max-height: 120px; object-fit: cover; border-radius: 5px; }
+/* A card controls its image size. Native image hover/resize chrome otherwise
+   keeps the original image bounds and can spill over the compact thumbnail. */
+.protyle-wysiwyg [custom-link-paste="card"] > [custom-link-paste-role="image"] .protyle-icons,
+.protyle-wysiwyg [custom-link-paste="card"] > [custom-link-paste-role="image"] .protyle-image-resize,
+.protyle-wysiwyg [custom-link-paste="card"] > [custom-link-paste-role="image"] .protyle-block-resize,
+.protyle-wysiwyg [custom-link-paste="card"] > [custom-link-paste-role="image"] .protyle-action__drag { display: none !important; }
+.protyle-wysiwyg [custom-link-paste="card"]:not(:has(> [custom-link-paste-role="image"])) { grid-template-columns: minmax(0, 1fr); }
+.protyle-wysiwyg [custom-link-paste="card"][custom-link-paste-mode="expanded"] { display: block !important; }
+.protyle-wysiwyg [custom-link-paste="card"][custom-link-paste-mode="expanded"] > [custom-link-paste-role="description"] { margin-top: 8px !important; }
+.protyle-wysiwyg [custom-link-paste="card"][custom-link-paste-mode="expanded"] > [custom-link-paste-role="description"] > [contenteditable] { display: block; overflow: visible; }
+.protyle-wysiwyg [custom-link-paste="card"][custom-link-paste-mode="expanded"] > [custom-link-paste-role="image"] { margin-top: 12px !important; }
+.protyle-wysiwyg [custom-link-paste="card"][custom-link-paste-mode="expanded"] > [custom-link-paste-role="image"] img { max-height: min(40vh, 360px); object-fit: contain; }
+.protyle-wysiwyg [custom-link-paste="card"] > .protyle-attr { position: static; }
+.protyle-wysiwyg [custom-link-paste="card"] button[data-link-paste-toggle] {
+  position: absolute; top: 7px; right: 7px; width: 27px; height: 27px; padding: 0;
+  border: 0; border-radius: 4px; background: var(--b3-theme-surface); color: var(--b3-theme-on-surface);
+  cursor: pointer; font: inherit; opacity: .7;
+}
+.protyle-wysiwyg [custom-link-paste="card"] button[data-link-paste-toggle]:hover,
+.protyle-wysiwyg [custom-link-paste="card"] button[data-link-paste-toggle]:focus-visible { opacity: 1; outline: 1px solid var(--b3-theme-primary); }

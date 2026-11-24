@@ -4,9 +4,10 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const { parseHTML, DOMParser } = require('linkedom');
 global.DOMParser = DOMParser;
+const { hostLute } = require('./host-lute.cjs');
 
-async function harness({ clipboard = 'https://example.com/', label = '', invalidTarget = false, code = false, pending = false } = {}) {
-  const inserted = [], messages = [], commands = [], released = [], updates = [], apiUpdates = [];
+async function harness({ clipboard = 'https://example.com/', label = '', invalidTarget = false, code = false, pending = false, config, image = '' } = {}) {
+  const inserted = [], messages = [], commands = [], released = [], updates = [], apiUpdates = [], assetUploads = [];
   let complete, seq = 0, savedDOM = '';
   const { document } = parseHTML('<html><body><div id="root"><div data-node-id="original" data-type="NodeParagraph"><div contenteditable="true"></div></div><div data-node-id="other" data-type="NodeParagraph"><div contenteditable="true">Other paragraph</div></div></div></body></html>');
   const root = document.getElementById('root');
@@ -25,7 +26,7 @@ async function harness({ clipboard = 'https://example.com/', label = '', invalid
   const resolvedRange = { ...originalRange, tracked: true };
   let currentRange = originalRange;
   const editor = {
-    protyle: { wysiwyg: { element: root }, toolbar: { getCurrentType: () => [] }, options: {} },
+    protyle: { lute: hostLute(), wysiwyg: { element: root }, toolbar: { getCurrentType: () => [] }, options: {} },
     hasClosestBlock: node => (node.nodeType === 1 ? node : node.parentElement)?.closest('[data-node-id]'),
     trackRange: () => 'handle',
     resolveTrackedRange: () => invalidTarget ? { status: 'invalid' } : { status: 'resolved', range: resolvedRange },
@@ -36,14 +37,16 @@ async function harness({ clipboard = 'https://example.com/', label = '', invalid
   const post = (endpoint, data) => {
     if (endpoint === '/api/block/getBlockDOM') return Promise.resolve({ code: savedDOM ? 0 : -1, data: { dom: savedDOM } });
     if (endpoint === '/api/block/updateBlock') { apiUpdates.push(data); savedDOM = data.data; return Promise.resolve({ code: 0 }); }
-    return pending ? new Promise(resolve => { complete = resolve; }) : Promise.resolve({ code: 0, data: { status: 200, body: '<title>Page &amp; title</title><meta property="og:description" content="Description">' } });
+    if (endpoint === '/api/asset/upload') { assetUploads.push(data); const file = data.get('file[]'); return Promise.resolve({ code: 0, data: { succMap: { [file.name]: `${data.get('assetsDirPath')}/${file.name}` } } }); }
+    if (data?.responseEncoding === 'base64') return Promise.resolve({ code: 0, data: { status: 200, bodyEncoding: 'base64', body: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=' } });
+    return pending ? new Promise(resolve => { complete = resolve; }) : Promise.resolve({ code: 0, data: { status: 200, body: `<title>Page &amp; title</title><meta property="og:description" content="Description">${image ? `<meta property="og:image" content="${image}">` : ''}` } });
   };
   const context = {
     module: { exports: {} }, console, AbortController, Set, WeakSet,
     window: { getSelection: () => ({ rangeCount: 1, getRangeAt: () => currentRange }), Lute: { NewNodeID: () => `test-${++seq}` } },
     navigator: { clipboard: { readText: async () => clipboard } }, document,
     require: name => name === 'siyuan' ? {
-      Plugin: class { addCommand(x) { commands.push(x); } async loadData() {} },
+      Plugin: class { addCommand(x) { commands.push(x); } async loadData() { return config; } },
       Setting: class { addItem() {} }, showMessage: (...x) => messages.push(x),
       getActiveEditor: () => editor, fetchSyncPost: post,
       insertContent: options => {
@@ -53,10 +56,14 @@ async function harness({ clipboard = 'https://example.com/', label = '', invalid
           const span = document.createElement('span');
           span.setAttribute('data-type', 'a'); span.setAttribute('data-href', a.getAttribute('href')); span.setAttribute('data-title', a.getAttribute('title')); span.textContent = a.textContent;
           editable.replaceChildren(span);
-        } else {
+        } else if (options.data.startsWith('<div')) {
           originalBlock.setAttribute('data-type', 'NodeHTMLBlock');
-          const html = document.createElement('protyle-html'); html.setAttribute('data-content', options.data);
-          originalBlock.replaceChildren(html);
+          const html = document.createElement('protyle-html'); html.setAttribute('data-content', options.data); originalBlock.replaceChildren(html);
+        } else {
+          const native = new DOMParser().parseFromString(editor.protyle.lute.Md2BlockDOM(options.data), 'text/html').querySelector('[data-type="NodeSuperBlock"]');
+          originalBlock.setAttribute('data-type', 'NodeSuperBlock');
+          originalBlock.setAttribute('custom-link-paste', 'pending');
+          originalBlock.replaceChildren(...Array.from(native.childNodes));
         }
         return { status: 'inserted' };
       },
@@ -65,10 +72,10 @@ async function harness({ clipboard = 'https://example.com/', label = '', invalid
   vm.runInNewContext(fs.readFileSync(require.resolve('../src/index.cjs'), 'utf8'), context);
   const plugin = new context.module.exports();
   await plugin.onload();
-  return { plugin, editor, root, originalBlock, inserted, messages, commands, released, updates, apiUpdates, resolvedRange,
+  return { plugin, editor, root, originalBlock, inserted, messages, commands, released, updates, apiUpdates, assetUploads, resolvedRange,
     moveAway: () => { const node = root.lastElementChild.firstElementChild.firstChild; currentRange = { startContainer: node, endContainer: node, toString: () => '' }; return currentRange; },
     currentRange: () => currentRange,
-    complete: () => complete?.({ code: 0, data: { status: 200, body: '<title>Late title</title><meta property="og:description" content="Description">' } }),
+    complete: () => complete?.({ code: 0, data: { status: 200, body: `<title>Late title</title><meta property="og:description" content="Description">${image ? `<meta property="og:image" content="${image}">` : ''}` } }),
   };
 }
 
@@ -89,13 +96,84 @@ test('titled paste updates its placeholder and preserves custom selected text', 
   assert.ok(!h.updates[0].undo.includes('Fetching'));
 });
 
-test('card paste replaces one native HTML-block placeholder in place', async () => {
+test('card paste settles its native block group with a normal editable title link', async () => {
   const h = await harness();
   await h.plugin.pasteURL(h.editor, 'card');
   assert.equal(h.inserted.length, 1);
-  assert.equal(h.originalBlock.getAttribute('data-type'), 'NodeHTMLBlock');
-  assert.match(h.originalBlock.querySelector('protyle-html').getAttribute('data-content'), /<details>/);
-  assert.ok(!h.originalBlock.querySelector('protyle-html').getAttribute('data-content').includes('Fetching'));
+  assert.equal(h.originalBlock.getAttribute('data-type'), 'NodeSuperBlock');
+  assert.equal(h.originalBlock.getAttribute('custom-link-paste'), 'card');
+  const link = h.originalBlock.querySelector('span[data-type="a"]');
+  assert.equal(link.textContent, 'Page & title');
+  assert.equal(link.getAttribute('data-href'), 'https://example.com/');
+  assert.equal(link.parentElement.getAttribute('contenteditable'), 'true');
+  assert.equal(h.originalBlock.querySelector('protyle-html'), null);
+  assert.ok(!h.originalBlock.outerHTML.includes('Fetching'));
+  assert.ok(!h.updates[0].undo.includes('Fetching'));
+});
+
+test('HTML and native cards both save thumbnails to the configured assets folder', async () => {
+  for (const cardFormat of ['native', 'html']) {
+    const h = await harness({ config: { cardFormat, saveThumbnails: true, thumbnailFolder: 'media/test' }, image: 'https://example.com/image.png' });
+    await h.plugin.pasteURL(h.editor, 'card');
+    assert.equal(h.assetUploads.length, 1);
+    assert.equal(h.assetUploads[0].get('assetsDirPath'), 'assets/media/test');
+    if (cardFormat === 'html') {
+      assert.equal(h.originalBlock.getAttribute('data-type'), 'NodeHTMLBlock');
+      const html = h.originalBlock.querySelector('protyle-html').getAttribute('data-content');
+      assert.match(html, /assets\/media\/test\/link-thumb-/);
+      assert.ok(!html.includes('https://example.com/image.png'));
+    } else {
+      assert.equal(h.originalBlock.getAttribute('data-type'), 'NodeSuperBlock');
+      assert.match(h.originalBlock.querySelector('img').getAttribute('src'), /^assets\/media\/test\/link-thumb-/);
+    }
+    assert.ok(!h.updates[0].undo.includes('Fetching'));
+  }
+});
+
+test('local saving off keeps the remote thumbnail in both card formats', async () => {
+  for (const cardFormat of ['native', 'html']) {
+    const h = await harness({ config: { cardFormat }, image: 'https://example.com/image.png' });
+    await h.plugin.pasteURL(h.editor, 'card');
+    assert.equal(h.assetUploads.length, 0);
+    assert.ok(h.originalBlock.outerHTML.includes('https://example.com/image.png'));
+  }
+});
+
+test('the chosen card format stays fixed while fetching, even if settings change', async () => {
+  for (const cardFormat of ['native', 'html']) {
+    const h = await harness({ pending: true, config: { cardFormat } });
+    const task = h.plugin.pasteURL(h.editor, 'card');
+    await new Promise(resolve => setImmediate(resolve));
+    const movedRange = h.moveAway();
+    h.plugin.config.cardFormat = cardFormat === 'html' ? 'native' : 'html';
+    h.complete(); await task;
+    assert.equal(h.originalBlock.getAttribute('data-type'), cardFormat === 'html' ? 'NodeHTMLBlock' : 'NodeSuperBlock');
+    assert.equal(h.currentRange(), movedRange);
+    assert.ok(!h.originalBlock.outerHTML.includes('Fetching'));
+  }
+});
+
+test('edited placeholders do not trigger thumbnail uploads in either format', async () => {
+  for (const cardFormat of ['native', 'html']) {
+    const h = await harness({ pending: true, config: { cardFormat, saveThumbnails: true }, image: 'https://example.com/image.png' });
+    const task = h.plugin.pasteURL(h.editor, 'card');
+    await new Promise(resolve => setImmediate(resolve));
+    if (cardFormat === 'html') h.originalBlock.querySelector('protyle-html').setAttribute('data-content', '<div>My edit</div>');
+    else h.originalBlock.querySelector('span[data-title]').textContent = 'My edit';
+    h.complete(); await task;
+    assert.equal(h.assetUploads.length, 0); assert.equal(h.updates.length, 0);
+    assert.ok(h.originalBlock.outerHTML.includes('My edit'));
+  }
+});
+
+test('an edited native card placeholder is left alone', async () => {
+  const h = await harness({ pending: true });
+  const task = h.plugin.pasteURL(h.editor, 'card');
+  await new Promise(resolve => setImmediate(resolve));
+  h.originalBlock.querySelector('span[data-title]').textContent = 'Edited while loading';
+  h.complete(); await task;
+  assert.equal(h.updates.length, 0);
+  assert.equal(h.originalBlock.querySelector('span[data-title]').textContent, 'Edited while loading');
 });
 
 test('a selected bare URL is upgraded to the fetched page title', async () => {

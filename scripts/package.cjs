@@ -26,10 +26,17 @@ function collect(dir, prefix = '') {
 collect(dist);
 const archive = zipSync(files, { level: 9 });
 const extracted = unzipSync(archive);
-for (const required of ['index.js', 'plugin.json', 'README.md', 'LICENSE', 'NOTICE.md', 'i18n/en_US.json', 'i18n/zh_CN.json']) {
+for (const required of ['index.js', 'index.css', 'icon.png', 'preview.jpg', 'plugin.json', 'README.md', 'CHANGELOG.md', 'LICENSE', 'NOTICE.md', 'i18n/en_US.json', 'i18n/zh_CN.json']) {
   assert.ok(extracted[required], `Missing ${required} at archive root`);
   assert.deepEqual(Buffer.from(extracted[required]), fs.readFileSync(path.join(dist, required)));
 }
+assert.equal(manifest.icon, 'icon.png');
+assert.equal(manifest.preview, 'preview.jpg');
+assert.ok(extracted['icon.png'].length <= 64 * 1024, 'Marketplace icon exceeds 64 KiB');
+assert.ok(extracted['preview.jpg'].length <= 512 * 1024, 'Marketplace preview exceeds 512 KiB');
+const png = Buffer.from(extracted['icon.png']);
+assert.equal(png.readUInt32BE(16), 160); assert.equal(png.readUInt32BE(20), 160);
+assert.equal(png[25], 6, 'Icon must retain RGBA transparency');
 for (const filename of Object.keys(extracted)) {
   assert.ok(!filename.includes('\\') && !filename.startsWith('/') && !filename.split('/').includes('..'));
   assert.ok(!/(?:^|\/)(?:node_modules|src|test|\.git)(?:\/|$)/.test(filename));

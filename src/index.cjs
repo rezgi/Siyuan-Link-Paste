@@ -1,9 +1,11 @@
-const { Plugin, Setting, fetchSyncPost, showMessage, getActiveEditor, insertContent } = require('siyuan');
+const { Plugin, Setting, fetchSyncPost, showMessage, getActiveEditor, getAllEditor, insertContent } = require('siyuan');
 const { normalizeURL, fetchMetadata, fallbackMeta } = require('./metadata.cjs');
-const { makePending, findPending, closestBlock, settlePending } = require('./pending.cjs');
+const { makePending, findPending, closestBlock, resolvePending, settlePending } = require('./pending.cjs');
 const { resolvePasteRange } = require('./position.cjs');
+const { installCardControls } = require('./cards.cjs');
+const { DEFAULTS, normalizeConfig } = require('./config.cjs');
+const { saveThumbnail } = require('./assets.cjs');
 
-const DEFAULTS = { cardMode: 'compact', timeoutMs: 4500, replaceTitle: true, useOEmbed: false };
 const STORAGE = 'config.json';
 
 module.exports = class LinkPastePlugin extends Plugin {
@@ -25,13 +27,12 @@ module.exports = class LinkPastePlugin extends Plugin {
     }
     try {
       const saved = await this.loadData(STORAGE);
-      if (saved) this.config = {
-        cardMode: saved.cardMode === 'expanded' ? 'expanded' : 'compact',
-        timeoutMs: Math.max(1000, Math.min(15000, Number(saved.timeoutMs) || DEFAULTS.timeoutMs)),
-        replaceTitle: saved.replaceTitle !== false,
-        useOEmbed: saved.useOEmbed === true,
-      };
+      if (saved) this.config = normalizeConfig(saved);
     } catch (error) { console.error('Link Paste: could not load settings', error); }
+  }
+
+  onLayoutReady() {
+    this.disposeCards = installCardControls(this, { getAllEditor, showMessage });
   }
 
   setupSettings() {
@@ -42,9 +43,11 @@ module.exports = class LinkPastePlugin extends Plugin {
         for (const [key, field] of Object.entries(fields)) {
           next[key] = field.type === 'checkbox' ? field.checked : field.type === 'number' ? Number(field.value) : field.value;
         }
-        next.timeoutMs = Math.max(1000, Math.min(15000, next.timeoutMs || DEFAULTS.timeoutMs));
-        await this.saveData(STORAGE, next);
-        this.config = next;
+        let validated;
+        try { validated = normalizeConfig(next, true); }
+        catch (error) { showMessage(error.message, 6000, 'error'); return; }
+        await this.saveData(STORAGE, validated);
+        this.config = validated;
       },
     });
     this.setting.addItem({
@@ -52,16 +55,19 @@ module.exports = class LinkPastePlugin extends Plugin {
       description: 'Change “Paste titled link” (Ctrl+K) and “Paste link card” (Ctrl+Shift+K) in Settings → Keymap → Link Paste. Reassign a conflicting built-in shortcut there if needed.',
       createActionElement: () => document.createElement('span'),
     });
-    for (const [key, title, description, type] of [
-      ['cardMode', 'Default card display', 'Cards can be expanded or collapsed by clicking their body.', 'select'],
-      ['timeoutMs', 'Metadata timeout (milliseconds)', 'One deadline for all fetch attempts. On timeout, keep the URL or insert a minimal card.', 'number'],
+    for (const [key, title, description, type, choices] of [
+      ['cardFormat', 'Card format', 'Native cards support SiYuan’s usual link panel. HTML cards use a self-contained HTML block. Applies to new pastes.', 'select', [['native', 'Native'], ['html', 'HTML block']]],
+      ['cardMode', 'Default card display', 'Native: use the ⤢ button or block menu. HTML: click the card body to expand or collapse.', 'select', [['compact', 'Compact'], ['expanded', 'Expanded']]],
+      ['saveThumbnails', 'Save thumbnails to assets', 'Keep a local image for offline use. Off by default; applies to new card pastes in either format. On failure, keep the online image.', 'checkbox'],
+      ['thumbnailFolder', 'Thumbnail folder', 'Inside SiYuan’s assets folder. Default: assets/_link_thumbs. You can use a subfolder such as assets/media/links.', 'text'],
+      ['timeoutMs', 'Fetch timeout (milliseconds)', 'Time limit for page metadata; thumbnail saving gets its own equal time limit. On failure, keep the URL or online image.', 'number'],
       ['replaceTitle', 'Set the link tooltip too', 'Store the fetched page title in the link title attribute.', 'checkbox'],
       ['useOEmbed', 'Use noembed.com fallback', 'Optional: sends the pasted URL to noembed.com when page metadata is incomplete.', 'checkbox'],
     ]) {
       this.setting.addItem({ title, description, createActionElement: () => {
         const field = document.createElement(type === 'select' ? 'select' : 'input');
         if (type === 'select') {
-          field.innerHTML = '<option value="compact">Compact</option><option value="expanded">Expanded</option>';
+          for (const [value, label] of choices) { const option = document.createElement('option'); option.value = value; option.textContent = label; field.appendChild(option); }
         } else { field.type = type; }
         field.className = type === 'checkbox' ? 'b3-switch' : type === 'select' ? 'b3-select' : 'b3-text-field';
         if (type === 'checkbox') field.checked = this.config[key];
@@ -123,7 +129,7 @@ module.exports = class LinkPastePlugin extends Plugin {
       job.config = config;
       const target = editor.resolveTrackedRange(handle);
       if (target.status !== 'resolved') return;
-      const pending = makePending(url, mode, label, window.Lute.NewNodeID());
+      const pending = makePending(url, mode, label, window.Lute.NewNodeID(), config);
       const result = insertContent({ editor, range: target.range, dataType: mode === 'card' ? 'markdown' : 'html', data: pending.html });
       if (result.status !== 'inserted') {
         showMessage(`Link Paste could not insert here (${result.status}).`, 4000, 'info');
@@ -131,7 +137,7 @@ module.exports = class LinkPastePlugin extends Plugin {
       }
       job.pending = pending;
       const placeholder = findPending(inner.wysiwyg.element, pending);
-      const placeholderBlock = closestBlock(placeholder);
+      const placeholderBlock = closestBlock(placeholder, pending);
       if (!placeholderBlock) throw new Error('Could not locate the inserted preview placeholder');
       pending.blockID = placeholderBlock.getAttribute('data-node-id');
       // The visible placeholder owns the result now. Caret movement is free.
@@ -145,7 +151,19 @@ module.exports = class LinkPastePlugin extends Plugin {
         card: mode === 'card', useOEmbed: config.useOEmbed, signal: controller.signal,
       });
       if (this.disposed || controller.signal.aborted) return;
+      let thumbnailError;
+      if (mode === 'card' && config.saveThumbnails && meta.image) {
+        if (!await resolvePending(editor, pending, fetchSyncPost)) return;
+        const result = await saveThumbnail(meta.image, {
+          folder: config.thumbnailFolder, post: fetchSyncPost, timeoutMs: config.timeoutMs, signal: controller.signal,
+          browserFetch: typeof window.require === 'function' ? globalThis.fetch?.bind(globalThis) : undefined,
+        });
+        if (result.saved) meta.image = result.path;
+        else { thumbnailError = result.error; console.warn('Link Paste thumbnail saving failed:', result.error); }
+      }
+      if (this.disposed || controller.signal.aborted) return;
       const updated = await settlePending(editor, pending, meta, config, fetchSyncPost);
+      if (updated && thumbnailError) showMessage('Could not save the thumbnail locally. Kept the online image.', 4500, 'info');
       if (updated && !meta.foundTitle) {
         const blocked = meta.attempts.some(attempt => [401, 403, 429].includes(attempt.status));
         showMessage(blocked ? 'This site blocked the preview request. Kept the URL.' : 'No page title was available. Kept the URL.', 4500, 'info');
@@ -166,6 +184,7 @@ module.exports = class LinkPastePlugin extends Plugin {
 
   onunload() {
     this.disposed = true;
+    this.disposeCards?.();
     for (const job of this.jobs || []) {
       job.controller.abort();
       if (job.handle) job.editor.releaseTrackedRange(job.handle);

@@ -1,6 +1,6 @@
 {
   "name": "siyuan-link-paste",
-  "version": "0.1.3",
+  "version": "0.1.6",
   "private": true,
   "description": "Dedicated titled-link and preview-card paste commands for SiYuan",
   "scripts": {

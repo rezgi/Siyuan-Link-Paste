@@ -1,17 +1,21 @@
 const { escapeHtml, buildCardHTML } = require('./render.cjs');
 const { normalizeURL } = require('./metadata.cjs');
+const { cardMarkdown, nativeCard, cardRoot } = require('./cards.cjs');
 
-function makePending(url, mode, label, token) {
+function makePending(url, mode, label, token, config = {}) {
   const marker = `link-paste-pending:${token}`;
   const text = `Fetching ${url}…`;
+  const cardFormat = config.cardFormat === 'html' ? 'html' : 'native';
   const html = mode === 'card'
-    ? `<div data-link-paste-pending="${escapeHtml(marker)}" style="padding:12px;border:1px solid var(--b3-border-color,#80808055);border-radius:8px">Fetching <a href="${escapeHtml(url)}">${escapeHtml(url)}</a>…</div>`
+    ? cardFormat === 'html'
+      ? `<div data-link-paste-pending="${escapeHtml(marker)}" style="padding:12px;border:1px solid var(--b3-border-color,#80808055);border-radius:8px">Fetching <a href="${escapeHtml(url)}">${escapeHtml(url)}</a>…</div>`
+      : cardMarkdown({}, url, config.cardMode, { id: token, marker, pending: true })
     : `<a href="${escapeHtml(url)}" title="${escapeHtml(marker)}">${escapeHtml(text)}</a>`;
-  return { url, mode, label, marker, text, html, blockID: null, settled: false };
+  return { url, mode, cardFormat, label, marker, text, html, blockID: null, settled: false };
 }
 
 function findPending(root, pending) {
-  if (pending.mode === 'card') {
+  if (pending.mode === 'card' && pending.cardFormat === 'html') {
     return Array.from(root.querySelectorAll('protyle-html')).find(node => node.getAttribute('data-content') === pending.html);
   }
   return Array.from(root.querySelectorAll('span[data-title]')).find(node =>
@@ -20,17 +24,21 @@ function findPending(root, pending) {
     node.textContent.replace(/\u200b/g, '') === pending.text);
 }
 
-function closestBlock(node) {
-  return node?.closest('[data-node-id]');
+function closestBlock(node, pending) {
+  return pending?.mode === 'card' && pending.cardFormat !== 'html' ? cardRoot(node, true) : node?.closest('[data-node-id]');
 }
 
-function applyResult(node, pending, meta, config, rawURL = false) {
-  if (pending.mode === 'card') {
-    const content = rawURL
-      ? `<div><a href="${escapeHtml(pending.url)}">${escapeHtml(pending.url)}</a></div>`
-      : buildCardHTML(meta, pending.url, config.cardMode);
-    // Native protyle-html observes this attribute and rerenders itself.
-    node.setAttribute('data-content', content);
+function applyResult(node, pending, meta, config, rawURL = false, lute) {
+  if (pending.mode === 'card' && pending.cardFormat === 'html') {
+    node.setAttribute('data-content', rawURL ? `<div><a href="${escapeHtml(pending.url)}">${escapeHtml(pending.url)}</a></div>` : buildCardHTML(meta, pending.url, config.cardMode));
+  } else if (pending.mode === 'card') {
+    const block = closestBlock(node, pending);
+    const rendered = nativeCard(rawURL ? { title: pending.url } : meta, pending.url, config.cardMode, {
+      id: pending.blockID, titleID: node.closest('[data-node-id]').getAttribute('data-node-id'), tooltip: !rawURL && config.replaceTitle,
+    }, lute);
+    block.replaceChildren(...Array.from(rendered.childNodes));
+    block.setAttribute('custom-link-paste', 'card');
+    block.setAttribute('custom-link-paste-mode', rendered.getAttribute('custom-link-paste-mode'));
   } else {
     const customLabel = pending.label && normalizeURL(pending.label) !== pending.url;
     node.textContent = rawURL ? (customLabel ? pending.label : pending.url) : (customLabel ? pending.label : meta.title || pending.url);
@@ -39,34 +47,41 @@ function applyResult(node, pending, meta, config, rawURL = false) {
   }
 }
 
-async function settlePending(editor, pending, meta, config, post) {
-  if (pending.settled || !pending.blockID) return false;
+async function resolvePending(editor, pending, post) {
+  if (pending.settled || !pending.blockID) return null;
   const root = editor.protyle.wysiwyg.element;
   let node = root.isConnected ? findPending(root, pending) : null;
-  let block = closestBlock(node);
+  let block = closestBlock(node, pending);
   const native = !!block;
   if (!node) {
     // An edited or deleted placeholder in the current DOM belongs to the user.
     // Only consult storage if the block was unloaded/virtualized or tab closed.
     if (root.isConnected && root.querySelector(`[data-node-id="${pending.blockID}"]`)) {
       pending.settled = true;
-      return false;
+      return null;
     }
     // A missing block can be a just-queued deletion. Commit it before reading
     // storage so a stale saved placeholder cannot resurrect deleted content.
     await editor.flushPendingTransactions();
     const response = await post('/api/block/getBlockDOM', { id: pending.blockID });
-    if (response?.code !== 0 || typeof response.data?.dom !== 'string') return false;
+    if (response?.code !== 0 || typeof response.data?.dom !== 'string') return null;
     const doc = new DOMParser().parseFromString(response.data.dom, 'text/html');
     node = findPending(doc, pending);
-    block = closestBlock(node);
-    if (!node || !block) { pending.settled = true; return false; }
+    block = closestBlock(node, pending);
+    if (!node || !block) { pending.settled = true; return null; }
   }
+  return { node, block, native };
+}
+
+async function settlePending(editor, pending, meta, config, post) {
+  const target = await resolvePending(editor, pending, post);
+  if (!target) return false;
+  const { node, block, native } = target;
   // An undo of completion should return to the URL, not an eternal Fetching label.
   const undoBlock = block.cloneNode(true);
   const undoNode = findPending(undoBlock, pending);
-  applyResult(undoNode, pending, meta, config, true);
-  applyResult(node, pending, meta, config);
+  applyResult(undoNode, pending, meta, config, true, editor.protyle.lute);
+  applyResult(node, pending, meta, config, false, editor.protyle.lute);
   if (native) {
     editor.updateTransactionElement(block, undoBlock.outerHTML);
     pending.settled = true;
@@ -79,4 +94,4 @@ async function settlePending(editor, pending, meta, config, post) {
   return true;
 }
 
-module.exports = { makePending, findPending, closestBlock, settlePending };
+module.exports = { makePending, findPending, closestBlock, resolvePending, settlePending };

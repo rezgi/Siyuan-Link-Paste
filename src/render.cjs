@@ -1,5 +1,6 @@
 // Adapted from Amin's local Card Link plugin. See LICENSE and NOTICE.md.
 const { safeResource } = require("./metadata.cjs");
+const { cardImageSource, localAssetPath } = require('./assets.cjs');
 function escapeHtml(str) {
   return String(str || "")
     .replace(/&/g, "&amp;")
@@ -17,7 +18,10 @@ function buildCardHTML(meta, url, mode) {
   const d = escapeHtml(meta.description);
   const dm = escapeHtml(meta.domain);
   const safeUrl = escapeHtml(url);
-  const img = safeResource(meta.image, url) ? escapeHtml(safeResource(meta.image, url)) : "";
+  const imageSource = cardImageSource(meta.image, url);
+  // HTML blocks have no native image renderer to resolve workspace-relative
+  // assets against the kernel root rather than the desktop page directory.
+  const img = escapeHtml(localAssetPath(imageSource) ? `/${imageSource}` : imageSource);
   const fav = safeResource(meta.favicon, url) ? escapeHtml(safeResource(meta.favicon, url)) : "";
   const expandable = !!img || !!d;
 
